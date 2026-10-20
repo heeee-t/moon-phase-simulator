@@ -5,6 +5,9 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // 👇 이 부분을 본인의 GitHub 저장소 이름으로 반드시 수정해 주세요!
+    base: '/moon-phase-simulator/', 
+    
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
