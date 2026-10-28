@@ -28,8 +28,17 @@ const MAJOR_PHASES = [
 
 const SNAP_THRESHOLD = 3.2; // degrees for magnetic snap
 
-// NASA LRO authentic photographic lunar map URL
-const NASA_MOON_TEXTURE_URL = "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/moon_1024.jpg";
+// 달 표면 사진 텍스처 경로
+// 저장소에 포함된 이미지를 가장 먼저 쓰고, 혹시 모를 경우에 대비해 외부 CDN을 뒤에 둔다.
+// (외부 주소만 쓰면 해당 사이트가 차단된 망에서 사진이 사라지고 기본 그래픽만 남는다)
+const MOON_TEXTURE_SOURCES = [
+  `${import.meta.env.BASE_URL}moon_1024.jpg`,
+  "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/moon_1024.jpg",
+  "https://raw.githubusercontent.com/mrdoob/three.js/r128/examples/textures/planets/moon_1024.jpg",
+];
+
+// 차단된 주소는 오류 대신 무응답으로 멈추기도 해서, 시간 제한을 두고 다음 경로로 넘어간다
+const MOON_TEXTURE_TIMEOUT_MS = 6000;
 
 export default function App() {
   const [angle, setAngle] = useState<number>(0);
@@ -56,6 +65,8 @@ export default function App() {
   const litMoonCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const darkMoonCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [, setTextureReady] = useState<boolean>(false);
+  // 사진 텍스처를 끝내 불러오지 못했는지 여부 (안내 표시용)
+  const [textureError, setTextureError] = useState<boolean>(false);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -232,11 +243,8 @@ export default function App() {
     darkMoonCanvasRef.current = darkCanvas;
     setTextureReady(true);
 
-    // Attempt to load NASA LRO authentic photographic texture and map orthographically
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = NASA_MOON_TEXTURE_URL;
-    img.onload = () => {
+    // 불러온 사진을 구면에 입혀 달 원반 텍스처로 변환한다
+    const applyPhotoTexture = (img: HTMLImageElement): boolean => {
       try {
         const srcW = img.width;
         const srcH = img.height;
@@ -300,9 +308,58 @@ export default function App() {
         litCtx.putImageData(outLitData, 0, 0);
         darkCtx.putImageData(outDarkData, 0, 0);
         setTextureReady(prev => !prev);
+        return true;
       } catch {
-        // Fallback procedural texture is already rendered
+        // 변환에 실패하면 다음 경로로 넘어간다 (기본 그래픽은 이미 그려져 있음)
+        return false;
       }
+    };
+
+    // 사진 텍스처를 MOON_TEXTURE_SOURCES 순서대로 시도한다
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const tryLoad = (index: number) => {
+      if (cancelled) return;
+
+      if (index >= MOON_TEXTURE_SOURCES.length) {
+        // 모든 경로 실패: 기본 그래픽을 유지하고 안내를 표시한다
+        setTextureError(true);
+        return;
+      }
+
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      let settled = false;
+
+      const goNext = () => {
+        if (settled || cancelled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        tryLoad(index + 1);
+      };
+
+      timeoutId = window.setTimeout(goNext, MOON_TEXTURE_TIMEOUT_MS);
+      img.onerror = goNext;
+      img.onload = () => {
+        if (settled || cancelled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        if (applyPhotoTexture(img)) {
+          setTextureError(false);
+        } else {
+          tryLoad(index + 1);
+        }
+      };
+
+      img.src = MOON_TEXTURE_SOURCES[index];
+    };
+
+    tryLoad(0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
     };
   }, []);
 
@@ -898,6 +955,15 @@ export default function App() {
               height={440}
               className="w-full h-full max-w-[260px] sm:max-w-[320px] md:max-w-[350px] max-h-[260px] sm:max-h-[320px] md:max-h-[350px] object-contain drop-shadow-[0_0_45px_rgba(255,255,255,0.08)] mb-6 sm:mb-8 md:mb-10"
             />
+
+            {/* 사진 텍스처를 끝내 불러오지 못했을 때의 안내 */}
+            {textureError && (
+              <div className="absolute top-2.5 sm:top-3.5 right-2.5 sm:right-4 z-10 max-w-[160px] sm:max-w-[200px] pointer-events-none bg-slate-900/85 backdrop-blur-md border border-amber-500/40 rounded-lg px-2.5 py-1.5 shadow-lg">
+                <p className="text-[10px] sm:text-[11px] text-amber-200/90 leading-snug break-keep">
+                  달 사진을 불러오지 못해 기본 그래픽으로 표시 중입니다.
+                </p>
+              </div>
+            )}
 
             {/* 현재 관측 상황 통합 정보 카드 (한눈에 알아보기 쉬운 고가독성 디자인) */}
             <div className="absolute bottom-2 sm:bottom-3 md:bottom-4 left-1/2 -translate-x-1/2 w-[92%] max-w-sm pointer-events-none z-10">
